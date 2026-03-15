@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>World Conquest</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ── MENU ── -->
+<div id="menu" class="screen active">
+  <div class="logo">WORLD CONQUEST</div>
+  <div class="subtitle">Multiplayer Strategy</div>
+  <button class="menu-btn btn-gold"  onclick="showLobby()">🤖 Bot ile Oyna</button>
+  <button class="menu-btn btn-ghost" onclick="showOnlineScreen()">🌐 Online Multiplayer</button>
+  <span class="version">v1.0.0 — World Conquest</span>
+</div>
+
+<!-- ── ONLINE SCREEN ── -->
+<div id="online-screen" class="screen">
+  <div id="online-card-wrap">
+    <div class="online-card">
+      <h2>🌐 Online Multiplayer</h2>
+      <p>Arkadaşlarınla gerçek zamanlı oyna</p>
+
+      <label class="field-label">Oyuncu Adın</label>
+      <input id="online-name" class="field-input" type="text" placeholder="İsmin..." maxlength="20" />
+
+      <div class="online-tabs">
+        <button class="online-tab active" onclick="switchTab('create')">🏠 Oda Kur</button>
+        <button class="online-tab"        onclick="switchTab('join')">🔑 Odaya Katıl</button>
+      </div>
+
+      <!-- CREATE TAB -->
+      <div id="tab-create" class="tab-panel active">
+        <div class="setting-row" style="margin-bottom:10px;">
+          <span class="setting-label">Tur Süresi</span>
+          <select id="mp-turn-time">
+            <option value="30">30 sn</option>
+            <option value="60" selected>60 sn</option>
+            <option value="90">90 sn</option>
+          </select>
+        </div>
+        <div class="setting-row" style="margin-bottom:10px;">
+          <span class="setting-label">Kazanma</span>
+          <select id="mp-win-cond">
+            <option value="70" selected>%70 Harita</option>
+            <option value="99">Son Hayatta</option>
+          </select>
+        </div>
+        <div class="setting-row" style="margin-bottom:20px;">
+          <span class="setting-label">Başlangıç Altını</span>
+          <select id="mp-start-gold">
+            <option value="500">500 💰</option>
+            <option value="1000" selected>1000 💰</option>
+            <option value="2000">2000 💰</option>
+          </select>
+        </div>
+        <button class="action-big-btn btn-create" onclick="mpCreateRoom()">🏠 Oda Kur</button>
+      </div>
+
+      <!-- JOIN TAB -->
+      <div id="tab-join" class="tab-panel">
+        <label class="field-label">Oda Kodu</label>
+        <input id="join-code-input" class="field-input code-input" type="text" placeholder="ABCD" maxlength="6" />
+        <button class="action-big-btn btn-join" onclick="mpJoinRoom()">🔑 Odaya Katıl</button>
+      </div>
+
+      <!-- CONNECTING STATE -->
+      <div id="connecting">
+        <div class="spinner"></div>
+        <div style="font-size:13px;color:var(--muted);" id="connecting-msg">Bağlanılıyor...</div>
+      </div>
+
+      <button class="back-btn" onclick="showMenu()">← Ana Menü</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── LOBBY ── -->
+<div id="lobby" class="screen">
+  <div class="lobby-header">
+    <button class="small-btn" onclick="leaveLobby()">← Geri</button>
+    <h2 id="lobby-title">🏠 Oda Bekleme</h2>
+    <div style="flex:1"></div>
+    <div id="room-code-wrap" style="display:flex;align-items:center;gap:8px;">
+      <span style="font-size:11px;color:var(--muted);">KOD</span>
+      <div class="room-code-display" id="room-code">—</div>
+      <button class="copy-btn" onclick="copyRoomCode()" title="Kopyala">📋</button>
+    </div>
+  </div>
+
+  <div class="lobby-body">
+    <div class="lobby-players">
+      <div class="section-title">Oyuncular (<span id="player-count">1</span>/8)</div>
+      <div id="player-list"></div>
+    </div>
+
+    <div class="lobby-settings">
+      <!-- BOT PANEL (solo only) -->
+      <div id="bot-panel" style="display:none;">
+        <div class="section-title">Test Oyuncuları</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
+          <button class="small-btn" onclick="addBot()">+ Bot Ekle</button>
+          <button class="small-btn" onclick="removeBot()">− Bot Çıkar</button>
+        </div>
+        <div style="border-top:1px solid var(--border);margin:0 0 16px;padding-top:16px;">
+          <div class="section-title">Oyun Ayarları</div>
+          <div class="setting-row">
+            <span class="setting-label">Tur Süresi</span>
+            <select id="turn-time">
+              <option value="30">30 sn</option>
+              <option value="60" selected>60 sn</option>
+              <option value="90">90 sn</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">Kazanma</span>
+            <select id="win-cond">
+              <option value="70" selected>%70 Harita</option>
+              <option value="99">Son Hayatta</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">Başlangıç Altını</span>
+            <select id="start-gold">
+              <option value="500">500 💰</option>
+              <option value="1000" selected>1000 💰</option>
+              <option value="2000">2000 💰</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- MP INFO PANEL -->
+      <div id="mp-info-panel" style="display:none;">
+        <div class="section-title">Online Oyun</div>
+        <p class="hint">Kodu arkadaşlarınla paylaş. Herkes hazır olunca başlat.</p>
+        <div style="margin-top:16px;">
+          <div class="section-title">Ayarlar</div>
+          <div id="mp-settings-display" style="font-size:13px;color:var(--muted);line-height:2;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="lobby-footer">
+    <button style="background:transparent;border-color:var(--border2);color:var(--muted);" onclick="leaveLobby()">İptal</button>
+    <button id="start-btn" style="background:linear-gradient(135deg,#f0a500,#d07800);border-color:#f0a500;color:#0a0800;" onclick="handleStartBtn()">🚀 BAŞLAT</button>
+  </div>
+</div>
+
+<!-- ── GAME ── -->
+<div id="game" class="screen">
+  <div id="hud">
+    <div class="hud-left">
+      <div class="stat-box">
+        <span>👑</span>
+        <div><div class="stat-val" id="hud-countries">0</div><div class="stat-label">Ülke</div></div>
+      </div>
+      <div class="stat-box">
+        <span>💰</span>
+        <div><div class="stat-val" id="hud-gold">1000</div><div class="stat-label">Altın</div></div>
+      </div>
+      <div class="stat-box">
+        <span>⚔️</span>
+        <div><div class="stat-val" id="hud-army">50</div><div class="stat-label">Ordu</div></div>
+      </div>
+      <div id="turn-indicator">⚡ Senin Turun</div>
+    </div>
+    <div class="hud-mid">
+      <div class="timer-box" id="timer-box">
+        <div class="timer-num" id="timer">60</div>
+        <div class="timer-label">Kalan</div>
+      </div>
+      <div class="turn-info" style="margin-left:6px;">
+        <div class="lbl">TUR</div>
+        <div class="num" id="turn-num">1</div>
+      </div>
+    </div>
+    <div class="hud-right">
+      <div id="players-hud" style="display:flex;gap:6px;"></div>
+      <button class="end-turn-btn" onclick="endTurn()">TUR BİTİR →</button>
+      <button class="exit-btn" onclick="showMenu()">✕ Çık</button>
+    </div>
+  </div>
+
+  <div id="map"></div>
+  <div id="diplo-log"></div>
+
+  <div id="sidebar">
+    <div class="sb-header">
+      <div class="sb-title" id="sb-title">—</div>
+      <button class="sb-close" onclick="closeSidebar()">×</button>
+    </div>
+    <div class="sb-body" id="sb-body"></div>
+  </div>
+</div>
+
+<!-- ── MODAL ── -->
+<div id="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-title" id="modal-title"></div>
+    <div class="modal-sub"   id="modal-sub"></div>
+    <input id="modal-input" class="modal-input" type="text" style="display:none;" />
+    <div class="modal-btns">
+      <button class="modal-cancel"  onclick="modalCancel()">Reddet</button>
+      <button class="modal-confirm" onclick="modalConfirm()">Kabul Et</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── WIN ── -->
+<canvas id="confetti-canvas"></canvas>
+<div id="win-overlay">
+  <div class="win-box">
+    <div class="win-icon"  id="win-icon">🏆</div>
+    <div class="win-title" id="win-title">KAZANDIN!</div>
+    <div class="win-sub"   id="win-sub"></div>
+    <button class="menu-btn btn-gold" style="margin:0 auto;" onclick="showMenu()">Ana Menü</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="countries.js"></script>
+<script src="game.js"></script>
+<script>
+  // Online tab switching
+  function switchTab(tab) {
+    document.querySelectorAll('.online-tab').forEach((t,i) => t.classList.toggle('active', (i===0&&tab==='create')||(i===1&&tab==='join')));
+    document.getElementById('tab-create').classList.toggle('active', tab==='create');
+    document.getElementById('tab-join').classList.toggle('active',   tab==='join');
+  }
+  function handleStartBtn() {
+    if (G.isMultiplayer) startMultiplayerGame();
+    else startGame();
+  }
+  function copyRoomCode() {
+    const code = document.getElementById('room-code').textContent;
+    navigator.clipboard?.writeText(code).then(()=>toast('Kod kopyalandı: '+code)).catch(()=>toast('Kod: '+code, 3000));
+  }
+  function leaveLobby() {
+    if (G.socket) { G.socket.disconnect(); G.socket=null; }
+    G.isMultiplayer=false;
+    showMenu();
+  }
+</script>
+</body>
+</html>
