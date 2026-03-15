@@ -354,7 +354,8 @@ function renderMapLayer() {
       layer.cid=id;
       layer.on('click',()=>clickCountry(id));
       layer.on('mouseover',function(){
-        const c=G.countries[id],o=c.owner!==null?playerById(c.owner):null;
+        const c=G.countries[id];if(!c)return;
+        const o=c.owner!==null?playerById(c.owner):null;
         const isMine=c.owner===G.myId;
         const reachable=G.neighbors[id]?[...G.neighbors[id]].some(n=>G.countries[n]?.owner===G.myId):false;
         const rel=o&&!isMine?getRelation(G.myId,c.owner):null;
@@ -427,16 +428,18 @@ function clickCountry(id) {
   }
 
   if(owner&&!isMyCountry){
+    // Store owner id in a way that's safe for onclick regardless of whether it's a number or socket.id string
+    G._sidebarOwnerId = c.owner;
     h+='<div class="divider"></div><div class="diplo-section-title">🌐 Diplomasi</div>';
     const pending=G.pendingAlliances.some(r=>r.fromId===G.myId&&r.toId===c.owner);
     if(rel!==REL.ALLIED){
-      if(!pending) h+='<button class="action-btn btn-diplo" onclick="proposeAlliance('+c.owner+')">🤝 İttifak Teklif Et <span class="cost">200💰</span></button>';
+      if(!pending) h+='<button class="action-btn btn-diplo" onclick="proposeAlliance(G._sidebarOwnerId)">🤝 İttifak Teklif Et <span class="cost">200💰</span></button>';
       else         h+='<button class="action-btn btn-diplo btn-disabled">🤝 Teklif Bekleniyor...</button>';
     }
-    if(rel===REL.ALLIED) h+='<button class="action-btn btn-war" onclick="breakAlliance('+c.owner+')">💔 İttifakı Boz</button>';
-    if(rel===REL.NEUTRAL)h+='<button class="action-btn btn-war" onclick="declareWar('+c.owner+')">🚨 Savaş İlan Et</button>';
-    if(rel===REL.WAR)    h+='<button class="action-btn btn-peace" onclick="offerPeace('+c.owner+')">☮️ Barış Teklif Et <span class="cost">150💰</span></button>';
-    h+='<button class="action-btn btn-gold-send" onclick="openGoldTransfer('+c.owner+')">💰 Altın Gönder</button>';
+    if(rel===REL.ALLIED) h+='<button class="action-btn btn-war" onclick="breakAlliance(G._sidebarOwnerId)">💔 İttifakı Boz</button>';
+    if(rel===REL.NEUTRAL)h+='<button class="action-btn btn-war" onclick="declareWar(G._sidebarOwnerId)">🚨 Savaş İlan Et</button>';
+    if(rel===REL.WAR)    h+='<button class="action-btn btn-peace" onclick="offerPeace(G._sidebarOwnerId)">☮️ Barış Teklif Et <span class="cost">150💰</span></button>';
+    h+='<button class="action-btn btn-gold-send" onclick="openGoldTransfer(G._sidebarOwnerId)">💰 Altın Gönder</button>';
   }
   h+='<div class="divider"></div><p class="hint">💡 Yeşil sınır=müttefik &nbsp; Kırmızı sınır=savaş</p>';
   document.getElementById('sb-body').innerHTML=h;
