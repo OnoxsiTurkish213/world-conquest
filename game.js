@@ -268,7 +268,9 @@ function setupSocketEvents() {
     G.neighbors={};
     Object.keys(neighbors).forEach(id=>{G.neighbors[id]=new Set(neighbors[id]);});
     G.myId=myPlayerId; initRelations(); G.eliminated=new Set();
-    showScreen('game'); setTimeout(initMapMultiplayer,50);
+    showScreen('game');
+    // Map must be created before selection:start arrives — give it time
+    setTimeout(()=>initMapMultiplayer(), 50);
   });
   G.socket.on('game:state',(state)=>{
     if(state.countries) G.countries=state.countries;
@@ -291,10 +293,14 @@ function setupSocketEvents() {
     else{ind.textContent='⏳ Bekle...';ind.classList.add('waiting');}
     startTimer(); if(G.myTurn) toast('Senin turun!',1500);
   });
-  // Selection phase
+  // Selection phase — wait for map to be ready before starting
   G.socket.on('selection:start',({order})=>{
     G.selectionOrder=order; G.selectionIdx=0;
-    startSelectionPhase();
+    const waitForMap=()=>{
+      if(G.map&&G.geoLayer&&G._mapReady){ startSelectionPhase(); }
+      else { setTimeout(waitForMap,100); }
+    };
+    waitForMap();
   });
   G.socket.on('selection:pick',({playerId,countryId})=>{
     applySelection(playerId,countryId);
@@ -362,7 +368,10 @@ function initMap() {
 function initMapMultiplayer() {
   resetMapState();
   G.map=createMap();
-  renderMapLayer(); initHUD();
+  renderMapLayer();
+  initHUD();
+  // Signal that map is ready — selection:start handler will pick this up
+  G._mapReady=true;
 }
 function resetMapState() {
   G.countries={}; G.countryBounds={}; G.turn=1; G.selected=null; G.phase='selection';
