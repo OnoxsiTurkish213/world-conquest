@@ -5,7 +5,7 @@ const path       = require('path');
 
 const app    = express();
 const server = http.createServer(app);
-const io     = new Server(server, { cors: { origin:'*', methods:['GET','POST'] } });
+const io     = new Server(server, { cors:{ origin:'*', methods:['GET','POST'] } });
 
 app.use(express.static(path.join(__dirname)));
 app.get('/', (req,res) => res.sendFile(path.join(__dirname,'index.html')));
@@ -101,12 +101,13 @@ const COUNTRIES = [
 ];
 
 function buildNeighbors() {
-  const PAD=1.5,nb={};
+  const PAD=1.5, nb={};
   COUNTRIES.forEach(c=>{nb[c.id]=[];});
   for(let i=0;i<COUNTRIES.length;i++) for(let j=i+1;j<COUNTRIES.length;j++) {
-    const a=COUNTRIES[i].bbox,b=COUNTRIES[j].bbox;
+    const a=COUNTRIES[i].bbox, b=COUNTRIES[j].bbox;
     if(a[0]-PAD<=b[2]&&a[2]+PAD>=b[0]&&a[1]-PAD<=b[3]&&a[3]+PAD>=b[1]){
-      nb[COUNTRIES[i].id].push(COUNTRIES[j].id);nb[COUNTRIES[j].id].push(COUNTRIES[i].id);
+      nb[COUNTRIES[i].id].push(COUNTRIES[j].id);
+      nb[COUNTRIES[j].id].push(COUNTRIES[i].id);
     }
   }
   return nb;
@@ -126,97 +127,150 @@ function initRelations(players) {
   players.forEach(a=>{r[a.id]={};players.forEach(b=>{if(a.id!==b.id)r[a.id][b.id]=REL.NEUTRAL;});});
   return r;
 }
-function distributeStart(countries,players) {
-  const ids=Object.keys(countries).sort(()=>Math.random()-0.5);
-  let i=0;
-  players.forEach(p=>{for(let k=0;k<2&&i<ids.length;k++,i++){countries[ids[i]].owner=p.id;countries[ids[i]].army=20;p.countries.push(ids[i]);}});
-}
 function checkWinServer(code) {
-  const room=rooms[code];if(!room)return;
+  const room=rooms[code]; if(!room) return;
+  const alive=room.players.filter(p=>!room.eliminated.has(p.id));
+  if(alive.length===1){
+    clearTimeout(room.timerHandle); room.phase='over';
+    io.to(code).emit('game:over',{winnerId:alive[0].id,winnerName:alive[0].name});
+    return;
+  }
   const total=Object.keys(room.countries).length;
   room.players.forEach(p=>{
+    if(room.eliminated.has(p.id)) return;
     const pct=Math.round(p.countries.length/total*100);
     if(pct>=(room.settings.winPct||70)){
-      clearTimeout(room.timerHandle);room.phase='over';
+      clearTimeout(room.timerHandle); room.phase='over';
       io.to(code).emit('game:over',{winnerId:p.id,winnerName:p.name});
     }
   });
 }
 
 io.on('connection', socket => {
-  console.log('+', socket.id);
+  console.log('+',socket.id);
 
-  socket.on('room:create', ({name,color,settings}) => {
+  socket.on('room:create',({name,color,settings})=>{
     const code=randCode();
     const player={id:socket.id,name,color,countries:[],gold:settings.startGold||1000,army:50};
-    rooms[code]={code,host:socket.id,players:[player],settings,phase:'lobby',currentIdx:0,turn:1,timerHandle:null,relations:{}};
-    socket.join(code);socket.roomCode=code;
+    rooms[code]={
+      code, host:socket.id, players:[player], settings,
+      phase:'lobby', countries:{}, relations:{},
+      eliminated:new Set(), selectionOrder:[], selectionIdx:0,
+      currentIdx:0, turn:1, timerHandle:null,
+    };
+    socket.join(code); socket.roomCode=code;
     socket.emit('room:joined',{roomCode:code,players:rooms[code].players,settings});
-    console.log('room created:',code,'by',name);
+    console.log('room:',code,'by',name);
   });
 
-  socket.on('room:join', ({code,name,color}) => {
+  socket.on('room:join',({code,name,color})=>{
     const room=rooms[code];
-    if(!room)          return socket.emit('room:error',{msg:'Oda bulunamadı: '+code});
+    if(!room)              return socket.emit('room:error',{msg:'Oda bulunamadı: '+code});
     if(room.phase!=='lobby') return socket.emit('room:error',{msg:'Oyun zaten başladı!'});
     if(room.players.length>=8) return socket.emit('room:error',{msg:'Oda dolu!'});
     const player={id:socket.id,name,color,countries:[],gold:room.settings.startGold||1000,army:50};
-    room.players.push(player);socket.join(code);socket.roomCode=code;
+    room.players.push(player);
+    socket.join(code); socket.roomCode=code;
     socket.emit('room:joined',{roomCode:code,players:room.players,settings:room.settings});
     socket.to(code).emit('room:updated',{players:room.players});
-    console.log(name,'joined',code);
   });
 
-  socket.on('game:start', ({roomCode}) => {
+  socket.on('game:start',({roomCode})=>{
     const room=rooms[roomCode];
     if(!room||room.host!==socket.id) return;
-    if(room.players.length<2) return socket.emit('room:error',{msg:'En az 2 oyuncu gerekli!'});
-    room.phase='playing';
+    if(room.players.length<2) return socket.emit('room:error',{msg:'En az 2 oyuncu!'});
+    room.phase='selection';
     room.countries=buildCountries();
     room.countryBounds=buildBounds();
     room.neighbors=buildNeighbors();
     room.relations=initRelations(room.players);
-    distributeStart(room.countries,room.players);
+    room.eliminated=new Set();
+    room.selectionOrder=room.players.map(p=>p.id);
+    room.selectionIdx=0;
+    // Send game:start to all players
     room.players.forEach(p=>{
-      io.to(p.id).emit('game:start',{players:room.players,countries:room.countries,countryBounds:room.countryBounds,neighbors:room.neighbors,myPlayerId:p.id});
+      io.to(p.id).emit('game:start',{
+        players:room.players, countries:room.countries,
+        countryBounds:room.countryBounds, neighbors:room.neighbors, myPlayerId:p.id,
+      });
     });
-    setTimeout(()=>startTurn(roomCode),600);
+    // Start selection phase
+    setTimeout(()=>{
+      io.to(roomCode).emit('selection:start',{order:room.selectionOrder});
+    },600);
   });
 
-  socket.on('player:action', action => {
-    const room=rooms[socket.roomCode];if(!room||room.phase!=='playing')return;
+  socket.on('selection:pick',({countryId})=>{
+    const room=rooms[socket.roomCode]; if(!room||room.phase!=='selection') return;
+    const currentId=room.selectionOrder[room.selectionIdx];
+    if(currentId!==socket.id) return;
+    const c=room.countries[countryId];
+    if(!c||c.owner!==null) return socket.emit('room:error',{msg:'Bu ülke zaten alınmış!'});
+    const p=room.players.find(x=>x.id===socket.id);
+    c.owner=socket.id; c.army=30; if(p) p.countries=[countryId];
+    io.to(socket.roomCode).emit('selection:pick',{playerId:socket.id,countryId});
+    room.selectionIdx++;
+    if(room.selectionIdx>=room.selectionOrder.length){
+      // All selected — start game
+      room.phase='playing';
+      io.to(socket.roomCode).emit('game:state',{countries:room.countries,players:room.players});
+      setTimeout(()=>startTurn(socket.roomCode),800);
+    }
+  });
+
+  socket.on('player:action',action=>{
+    const room=rooms[socket.roomCode]; if(!room||room.phase!=='playing') return;
     action.playerId=socket.id;
     if(action.type==='reinforce'){
-      const c=room.countries[action.countryId],p=room.players.find(x=>x.id===socket.id);
+      const c=room.countries[action.countryId], p=room.players.find(x=>x.id===socket.id);
       if(c&&p&&p.gold>=50){p.gold-=50;c.army+=10;p.army+=10;}
     } else if(action.type==='attack'&&action.success){
-      const c=room.countries[action.countryId],att=room.players.find(x=>x.id===socket.id);
+      const c=room.countries[action.countryId], att=room.players.find(x=>x.id===socket.id);
       if(c&&att){
-        if(c.owner!==null){const prev=room.players.find(x=>x.id===c.owner);if(prev)prev.countries=prev.countries.filter(x=>x!==action.countryId);}
-        c.owner=socket.id;if(!att.countries.includes(action.countryId))att.countries.push(action.countryId);
+        const prevId=c.owner;
+        if(prevId!==null){
+          const prev=room.players.find(x=>x.id===prevId);
+          if(prev) prev.countries=prev.countries.filter(x=>x!==action.countryId);
+          // Check elimination
+          if(prev&&prev.countries.length===0&&!room.eliminated.has(prevId)){
+            room.eliminated.add(prevId);
+            // Their countries become neutral
+            Object.values(room.countries).forEach(oc=>{if(oc.owner===prevId){oc.owner=null;oc.army=Math.max(5,Math.floor(oc.army*0.5));}});
+            io.to(socket.roomCode).emit('player:eliminated',{playerId:prevId,playerName:prev.name});
+          }
+        }
+        c.owner=socket.id;
+        if(!att.countries.includes(action.countryId)) att.countries.push(action.countryId);
       }
     }
-    io.to(socket.roomCode).emit('game:state',{countries:room.countries,players:room.players,relations:room.relations});
+    io.to(socket.roomCode).emit('game:state',{
+      countries:room.countries, players:room.players,
+      relations:room.relations, eliminated:[...room.eliminated],
+    });
     socket.to(socket.roomCode).emit('player:action',action);
     checkWinServer(socket.roomCode);
   });
 
+  socket.on('player:eliminated',({playerId})=>{
+    // Client reporting their own elimination (solo mode reports to others in mp)
+    // Just broadcast, server already handles this in player:action
+  });
+
   // Diplomacy
-  socket.on('diplo:request', ({type,toId}) => {
-    const room=rooms[socket.roomCode];if(!room)return;
-    const from=room.players.find(p=>p.id===socket.id);if(!from)return;
+  socket.on('diplo:request',({type,toId})=>{
+    const room=rooms[socket.roomCode]; if(!room) return;
+    const from=room.players.find(p=>p.id===socket.id); if(!from) return;
     if(type==='alliance'&&from.gold>=200){from.gold-=200;io.to(socket.roomCode).emit('game:state',{players:room.players});}
     if(type==='peace'   &&from.gold>=150){from.gold-=150;io.to(socket.roomCode).emit('game:state',{players:room.players});}
     io.to(toId).emit('diplo:request',{type,fromId:socket.id,fromName:from.name,fromColor:from.color});
   });
-
-  socket.on('diplo:response', ({type,toId,accepted}) => {
-    const room=rooms[socket.roomCode];if(!room)return;
+  socket.on('diplo:response',({type,toId,accepted})=>{
+    const room=rooms[socket.roomCode]; if(!room) return;
     if(accepted){
       const nr=type==='alliance'?REL.ALLIED:REL.NEUTRAL;
       if(!room.relations[socket.id])room.relations[socket.id]={};
       if(!room.relations[toId])    room.relations[toId]={};
-      room.relations[socket.id][toId]=nr;room.relations[toId][socket.id]=nr;
+      room.relations[socket.id][toId]=nr; room.relations[toId][socket.id]=nr;
       io.to(socket.roomCode).emit('game:state',{relations:room.relations});
     } else {
       const from=room.players.find(p=>p.id===toId);
@@ -225,43 +279,40 @@ io.on('connection', socket => {
     }
     io.to(toId).emit('diplo:response',{type,fromId:socket.id,accepted});
   });
-
-  socket.on('diplo:war', ({targetId}) => {
-    const room=rooms[socket.roomCode];if(!room)return;
+  socket.on('diplo:war',({targetId})=>{
+    const room=rooms[socket.roomCode]; if(!room) return;
     const from=room.players.find(p=>p.id===socket.id);
     if(!room.relations[socket.id])room.relations[socket.id]={};
     if(!room.relations[targetId]) room.relations[targetId]={};
-    room.relations[socket.id][targetId]=REL.WAR;room.relations[targetId][socket.id]=REL.WAR;
+    room.relations[socket.id][targetId]=REL.WAR; room.relations[targetId][socket.id]=REL.WAR;
     io.to(socket.roomCode).emit('game:state',{relations:room.relations});
     io.to(socket.roomCode).emit('diplo:war',{fromId:socket.id,fromName:from?.name,fromColor:from?.color,targetId});
   });
-
-  socket.on('diplo:break', ({targetId}) => {
-    const room=rooms[socket.roomCode];if(!room)return;
+  socket.on('diplo:break',({targetId})=>{
+    const room=rooms[socket.roomCode]; if(!room) return;
     if(!room.relations[socket.id])room.relations[socket.id]={};
     if(!room.relations[targetId]) room.relations[targetId]={};
-    room.relations[socket.id][targetId]=REL.NEUTRAL;room.relations[targetId][socket.id]=REL.NEUTRAL;
+    room.relations[socket.id][targetId]=REL.NEUTRAL; room.relations[targetId][socket.id]=REL.NEUTRAL;
     io.to(socket.roomCode).emit('game:state',{relations:room.relations});
   });
-
-  socket.on('diplo:gold', ({toId,amount}) => {
-    const room=rooms[socket.roomCode];if(!room)return;
-    const from=room.players.find(p=>p.id===socket.id),to=room.players.find(p=>p.id===toId);
-    if(!from||!to||from.gold<amount)return;
-    from.gold-=amount;to.gold+=amount;
+  socket.on('diplo:gold',({toId,amount})=>{
+    const room=rooms[socket.roomCode]; if(!room) return;
+    const from=room.players.find(p=>p.id===socket.id), to=room.players.find(p=>p.id===toId);
+    if(!from||!to||from.gold<amount) return;
+    from.gold-=amount; to.gold+=amount;
     io.to(socket.roomCode).emit('game:state',{players:room.players});
     io.to(toId).emit('diplo:request',{type:'gold',fromId:socket.id,fromName:from.name,fromColor:from.color,amount});
   });
 
-  socket.on('turn:end', ({roomCode}) => {
-    const room=rooms[roomCode];if(!room||room.phase!=='playing')return;
-    if(room.players[room.currentIdx]?.id!==socket.id)return;
-    clearTimeout(room.timerHandle);advanceTurn(roomCode);
+  socket.on('turn:end',({roomCode})=>{
+    const room=rooms[roomCode]; if(!room||room.phase!=='playing') return;
+    if(room.players[room.currentIdx]?.id!==socket.id) return;
+    clearTimeout(room.timerHandle); advanceTurn(roomCode);
   });
 
-  socket.on('disconnect', () => {
+  socket.on('disconnect',()=>{
     console.log('-',socket.id);
-    const code=socket.roomCode;if(!code||!rooms[code])return;
+    const code=socket.roomCode; if(!code||!rooms[code]) return;
     const room=rooms[code];
     room.players=room.players.filter(p=>p.id!==socket.id);
     if(room.players.length===0){clearTimeout(room.timerHandle);delete rooms[code];}
@@ -270,11 +321,17 @@ io.on('connection', socket => {
 });
 
 function startTurn(code) {
-  const room=rooms[code];if(!room||room.phase!=='playing')return;
+  const room=rooms[code]; if(!room||room.phase!=='playing') return;
+  // Skip eliminated players
+  let tries=0;
+  while(room.eliminated.has(room.players[room.currentIdx]?.id)&&tries<room.players.length){
+    room.currentIdx=(room.currentIdx+1)%room.players.length; tries++;
+  }
   const cur=room.players[room.currentIdx];
-  if(cur){
-    let inc=0;cur.countries.forEach(id=>{if(room.countries[id])inc+=room.countries[id].income;});
-    cur.gold+=inc;cur.army+=Math.floor(inc/15);
+  if(cur&&!room.eliminated.has(cur.id)){
+    let inc=0;
+    cur.countries.forEach(id=>{if(room.countries[id])inc+=room.countries[id].income;});
+    cur.gold+=inc; cur.army+=Math.floor(inc/15);
   }
   io.to(code).emit('game:state',{countries:room.countries,players:room.players});
   io.to(code).emit('turn:start',{turn:room.turn,currentPlayerId:cur?.id});
@@ -282,10 +339,11 @@ function startTurn(code) {
   room.timerHandle=setTimeout(()=>advanceTurn(code),dur);
 }
 function advanceTurn(code) {
-  const room=rooms[code];if(!room||room.phase!=='playing')return;
+  const room=rooms[code]; if(!room||room.phase!=='playing') return;
   room.currentIdx=(room.currentIdx+1)%room.players.length;
-  room.turn++;startTurn(code);
+  room.turn++;
+  startTurn(code);
 }
 
 const PORT=process.env.PORT||3000;
-server.listen(PORT,()=>console.log('World Conquest v1.0.0 on port',PORT));
+server.listen(PORT,()=>console.log('World Conquest v1.5.0 on port',PORT));
