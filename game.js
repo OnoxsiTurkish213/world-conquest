@@ -5,7 +5,7 @@
 // ─── CONFIG ───────────────────────────────────
 // Deploy server.js to Railway, then change this URL once.
 // Players never see this line.
-const SERVER_URL = 'world-conquest-production.up.railway.app';
+const SERVER_URL = 'https://world-conquest-production.up.railway.app/';
 
 // ─── CONSTANTS ────────────────────────────────
 const PLAYER_COLORS = ['#ef4444','#3b82f6','#22c55e','#f59e0b','#8b5cf6','#ec4899','#06b6d4','#f97316'];
