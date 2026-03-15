@@ -5,7 +5,7 @@
 // ─── CONFIG ───────────────────────────────────
 // Deploy server.js to Railway, then change this URL once.
 // Players never see this line.
-const SERVER_URL = 'https://world-conquest-production.up.railway.app';
+const SERVER_URL = 'https://YOUR-RAILWAY-URL.railway.app';
 
 // ─── CONSTANTS ────────────────────────────────
 const PLAYER_COLORS = ['#ef4444','#3b82f6','#22c55e','#f59e0b','#8b5cf6','#ec4899','#06b6d4','#f97316'];
@@ -215,27 +215,23 @@ function mpCreateRoom() {
     startGold:    parseInt(document.getElementById('mp-start-gold').value),
   };
   showConnecting('Sunucuya bağlanılıyor...');
-  loadSocketIO(()=>{
-    G.socket=io(SERVER_URL,{transports:['websocket','polling']});
-    setupSocketEvents();
-    G.socket.on('connect',()=>{
-      document.getElementById('connecting-msg').textContent='Oda oluşturuluyor...';
-      G.socket.emit('room:create',{name,color:PLAYER_COLORS[0],settings});
-    });
-    G.socket.on('connect_error',()=>{ hideConnecting(); toast('Sunucuya bağlanılamadı!',3000); });
+  G.socket=io(SERVER_URL,{transports:['websocket','polling']});
+  setupSocketEvents();
+  G.socket.on('connect',()=>{
+    document.getElementById('connecting-msg').textContent='Oda oluşturuluyor...';
+    G.socket.emit('room:create',{name,color:PLAYER_COLORS[0],settings});
   });
+  G.socket.on('connect_error',()=>{ hideConnecting(); toast('Sunucuya bağlanılamadı!',3000); });
 }
 function mpJoinRoom() {
   const name=document.getElementById('online-name').value.trim()||'Oyuncu';
   const code=document.getElementById('join-code-input').value.trim().toUpperCase();
   if(!code||code.length<4) return toast('Geçerli bir oda kodu gir!');
   showConnecting('Odaya katılınıyor...');
-  loadSocketIO(()=>{
-    G.socket=io(SERVER_URL,{transports:['websocket','polling']});
-    setupSocketEvents();
-    G.socket.on('connect',()=>G.socket.emit('room:join',{code,name,color:PLAYER_COLORS[Math.floor(Math.random()*PLAYER_COLORS.length)]}));
-    G.socket.on('connect_error',()=>{ hideConnecting(); toast('Sunucuya bağlanılamadı!',3000); });
-  });
+  G.socket=io(SERVER_URL,{transports:['websocket','polling']});
+  setupSocketEvents();
+  G.socket.on('connect',()=>G.socket.emit('room:join',{code,name,color:PLAYER_COLORS[Math.floor(Math.random()*PLAYER_COLORS.length)]}));
+  G.socket.on('connect_error',()=>{ hideConnecting(); toast('Sunucuya bağlanılamadı!',3000); });
 }
 function showConnecting(msg) {
   document.getElementById('online-card-wrap').querySelectorAll('.online-card > *:not(#connecting)').forEach(el=>el.style.display='none');
@@ -245,12 +241,6 @@ function showConnecting(msg) {
 function hideConnecting() {
   document.getElementById('online-card-wrap').querySelectorAll('.online-card > *').forEach(el=>el.style.display='');
   document.getElementById('connecting').classList.remove('show');
-}
-function loadSocketIO(cb) {
-  if(window.io) return cb();
-  const s=document.createElement('script'); s.src=SERVER_URL+'/socket.io/socket.io.js';
-  s.onload=cb; s.onerror=()=>toast('Socket.io yüklenemedi!',3000);
-  document.head.appendChild(s);
 }
 function setupSocketEvents() {
   G.socket.on('room:joined',({roomCode,players,settings})=>{
